@@ -4,6 +4,7 @@ XRM MCP gives you direct read and write access to any Dataverse / XRM environmen
 
 ## Decision tree
 
+- First time connecting to an environment → call ping first to verify setup
 - User names a table in business language ("hour entries", "work orders") → call list_tables with search term first
 - User names a table you recognise → call query_records directly
 - You need column names for filter or select → call describe_table first
@@ -11,6 +12,9 @@ XRM MCP gives you direct read and write access to any Dataverse / XRM environmen
 - Never assume a table's logical name. Never default the org_url. Always ask the user if org_url not provided.
 
 ## Example: "get hour entries from last 30 days from https://niiranen-prod.crm4.dynamics.com"
+
+**Step 0 (first time):** ping(org_url="https://niiranen-prod.crm4.dynamics.com")
+→ returns {status: "ok", org_url: "...", user_id: "...", business_unit_id: "...", org_id: "..."}
 
 **Step 1:** list_tables(org_url="https://niiranen-prod.crm4.dynamics.com", search="hour")
 → returns [{logical_name: "cr123_hourentry", ...}]
@@ -31,8 +35,11 @@ XRM MCP gives you direct read and write access to any Dataverse / XRM environmen
 
 ### Read tools
 
-**list_tables(org_url, search="")**
-Search tables by display name or logical name. Use this when the user refers to a table by a business name.
+**ping(org_url)**
+Verify connectivity and authentication to a Dataverse environment. Returns {status, org_url, user_id, business_unit_id, org_id}. Call this first when connecting to a new environment.
+
+**list_tables(org_url, search="", custom_only=True, prefix="")**
+Search tables by display name or logical name. Use this when the user refers to a table by a business name. By default, only custom entities are returned (custom_only=True). Use prefix to filter by logical name prefix.
 
 **describe_table(org_url, table)**
 Get column metadata for a table. Use this before querying to find column names.

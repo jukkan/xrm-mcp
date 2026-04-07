@@ -16,7 +16,31 @@ mcp = FastMCP("xrm-mcp")
 
 
 @mcp.tool()
-def list_tables(org_url: str, search: str = "") -> list[dict[str, Any]]:
+def ping(org_url: str) -> dict[str, Any]:
+    """Test connectivity to an XRM/Dataverse environment and verify authentication.
+
+    Call this first to verify your setup and connection to the Dataverse environment.
+
+    Args:
+        org_url: The Dataverse organization URL (e.g., https://yourorg.crm4.dynamics.com)
+
+    Returns:
+        Dictionary with status, org_url, user_id, business_unit_id, org_id
+    """
+    token = get_token(org_url)
+    response = fetch(org_url, "WhoAmI", token)
+
+    return {
+        "status": "ok",
+        "org_url": org_url,
+        "user_id": response.get("UserId", ""),
+        "business_unit_id": response.get("BusinessUnitId", ""),
+        "org_id": response.get("OrganizationId", ""),
+    }
+
+
+@mcp.tool()
+def list_tables(org_url: str, search: str = "", custom_only: bool = True, prefix: str = "") -> list[dict[str, Any]]:
     """Search XRM/Dataverse tables by display name or logical name.
 
     Always call this first when the user refers to a table by a business name
@@ -25,12 +49,14 @@ def list_tables(org_url: str, search: str = "") -> list[dict[str, Any]]:
     Args:
         org_url: The Dataverse organization URL (e.g., https://yourorg.crm4.dynamics.com)
         search: Optional search term to filter tables
+        custom_only: If True, only return custom entities (default: True)
+        prefix: Optional prefix to filter logical names (e.g., "cr123_")
 
     Returns:
         List of tables with logical_name, display_name, entity_set_name, is_custom, description
     """
     token = get_token(org_url)
-    return schema_module.list_tables(org_url, token, search)
+    return schema_module.list_tables(org_url, token, search, custom_only, prefix)
 
 
 @mcp.tool()
