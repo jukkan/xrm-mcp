@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "xrm-mcp"
+version = "0.1.0"
+description = "Minimal MCP server for Microsoft Dataverse / XRM via Web API"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastmcp>=0.1.0",
+    "msal>=1.28.0",
+    "httpx>=0.27.0",
+]
+
+[project.scripts]
+xrm-mcp = "xrm_mcp.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/xrm_mcp"]
