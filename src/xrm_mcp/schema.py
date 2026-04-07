@@ -8,13 +8,15 @@ from typing import Any
 from .api import fetch
 
 
-def list_tables(org_url: str, token: str, search: str = "") -> list[dict[str, Any]]:
+def list_tables(org_url: str, token: str, search: str = "", custom_only: bool = True, prefix: str = "") -> list[dict[str, Any]]:
     """List tables (entity definitions) in the Dataverse environment.
 
     Args:
         org_url: The organization URL
         token: The access token
         search: Optional search term to filter by logical name or display name
+        custom_only: If True, only return custom entities (default: True)
+        prefix: Optional prefix to filter logical names (e.g., "cr123_")
 
     Returns:
         List of table metadata dictionaries with keys:
@@ -27,6 +29,24 @@ def list_tables(org_url: str, token: str, search: str = "") -> list[dict[str, An
     params = {
         "$select": "LogicalName,DisplayName,Description,EntitySetName,IsCustomEntity",
     }
+
+    # Build server-side filter
+    filters = []
+
+    if custom_only:
+        filters.append("IsCustomEntity eq true")
+
+    if prefix:
+        filters.append(f"startswith(LogicalName,'{prefix}')")
+
+    # Add search filtering server-side when custom_only=True
+    if search and custom_only:
+        # Filter LogicalName server-side, DisplayName will be filtered client-side
+        # Note: Complex DisplayName filtering with LocalizedLabels/any is not supported by Dataverse
+        filters.append(f"contains(LogicalName,'{search}')")
+
+    if filters:
+        params["$filter"] = " and ".join(filters)
 
     response = fetch(org_url, "EntityDefinitions", token, params)
     tables = []
@@ -42,11 +62,19 @@ def list_tables(org_url: str, token: str, search: str = "") -> list[dict[str, An
 
         logical_name = entity.get("LogicalName", "")
 
-        # Filter by search term if provided
+        # Client-side filtering for search term
         if search:
             search_lower = search.lower()
-            if search_lower not in logical_name.lower() and search_lower not in display_name.lower():
-                continue
+            # If custom_only=True, LogicalName is already filtered server-side, only check DisplayName
+            if custom_only:
+                if search_lower not in display_name.lower():
+                    # Already matched LogicalName server-side, check if also matches DisplayName
+                    # If not, we still keep it because it matched LogicalName
+                    pass
+            else:
+                # If custom_only=False, do full client-side filtering
+                if search_lower not in logical_name.lower() and search_lower not in display_name.lower():
+                    continue
 
         tables.append({
             "logical_name": logical_name,
