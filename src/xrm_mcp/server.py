@@ -40,23 +40,23 @@ def ping(org_url: str) -> dict[str, Any]:
 
 
 @mcp.tool()
-def list_tables(org_url: str, search: str = "", custom_only: bool = True, prefix: str = "") -> list[dict[str, Any]]:
-    """Search XRM/Dataverse tables by display name or logical name.
+def list_tables(org_url: str, search: str = "", custom_only: bool = True, prefix: str = "", exclude_ms_prefixes: bool = True) -> list[dict[str, Any]]:
+    """Lists Dataverse tables. Defaults to custom tables only, excluding Microsoft-prefixed solution tables (msdyn_, msfp_, adx_ etc).
 
-    Always call this first when the user refers to a table by a business name
-    like 'hour entries' or 'accounts'. Returns logical_name you need for other tools.
+    Use prefix='na_' to filter to a specific publisher. Use exclude_ms_prefixes=False to see all custom tables.
 
     Args:
         org_url: The Dataverse organization URL (e.g., https://yourorg.crm4.dynamics.com)
         search: Optional search term to filter tables
         custom_only: If True, only return custom entities (default: True)
         prefix: Optional prefix to filter logical names (e.g., "cr123_")
+        exclude_ms_prefixes: If True, exclude Microsoft-prefixed solution tables (default: True)
 
     Returns:
         List of tables with logical_name, display_name, entity_set_name, is_custom, description
     """
     token = get_token(org_url)
-    return schema_module.list_tables(org_url, token, search, custom_only, prefix)
+    return schema_module.list_tables(org_url, token, search, custom_only, prefix, exclude_ms_prefixes)
 
 
 @mcp.tool()

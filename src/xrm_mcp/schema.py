@@ -8,7 +8,7 @@ from typing import Any
 from .api import fetch
 
 
-def list_tables(org_url: str, token: str, search: str = "", custom_only: bool = True, prefix: str = "") -> list[dict[str, Any]]:
+def list_tables(org_url: str, token: str, search: str = "", custom_only: bool = True, prefix: str = "", exclude_ms_prefixes: bool = True) -> list[dict[str, Any]]:
     """List tables (entity definitions) in the Dataverse environment.
 
     Args:
@@ -17,6 +17,7 @@ def list_tables(org_url: str, token: str, search: str = "", custom_only: bool = 
         search: Optional search term to filter by logical name or display name
         custom_only: If True, only return custom entities (default: True)
         prefix: Optional prefix to filter logical names (e.g., "cr123_")
+        exclude_ms_prefixes: If True, exclude Microsoft-prefixed solution tables (default: True)
 
     Returns:
         List of table metadata dictionaries with keys:
@@ -51,6 +52,13 @@ def list_tables(org_url: str, token: str, search: str = "", custom_only: bool = 
     response = fetch(org_url, "EntityDefinitions", token, params)
     tables = []
 
+    # Microsoft-prefixed solution tables to exclude
+    ms_prefixes = (
+        "msdyn_", "msdynmkt_", "msdyncrm_", "msfp_", "adx_", "mspp_", "bot_",
+        "botcomponent_", "flowmachine", "flowsession", "desktopflow",
+        "workqueue", "gitbranch", "gitorganization", "gitrepository"
+    )
+
     for entity in response.get("value", []):
         # Extract display name label
         display_name_labels = entity.get("DisplayName", {}).get("LocalizedLabels", [])
@@ -61,6 +69,12 @@ def list_tables(org_url: str, token: str, search: str = "", custom_only: bool = 
         description = description_labels[0].get("Label", "") if description_labels else ""
 
         logical_name = entity.get("LogicalName", "")
+
+        # Filter out Microsoft-prefixed solution tables if requested
+        # Note: prefix parameter overrides exclude_ms_prefixes
+        if exclude_ms_prefixes and not prefix:
+            if any(logical_name.startswith(p) for p in ms_prefixes):
+                continue
 
         # Client-side filtering for search term
         if search:

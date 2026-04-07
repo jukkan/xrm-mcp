@@ -11,6 +11,12 @@ XRM MCP gives you direct read and write access to any Dataverse / XRM environmen
 - Writing data → use create_record, update_record, or upsert_record
 - Never assume a table's logical name. Never default the org_url. Always ask the user if org_url not provided.
 
+**list_tables usage patterns:**
+- First call (focused custom table list): list_tables(org_url)
+- User's own tables: list_tables(org_url, prefix="na_")
+- Everything: list_tables(org_url, exclude_ms_prefixes=False)
+- Search: list_tables(org_url, search="hour")
+
 ## Example: "get hour entries from last 30 days from https://niiranen-prod.crm4.dynamics.com"
 
 **Step 0 (first time):** ping(org_url="https://niiranen-prod.crm4.dynamics.com")
@@ -38,8 +44,8 @@ XRM MCP gives you direct read and write access to any Dataverse / XRM environmen
 **ping(org_url)**
 Verify connectivity and authentication to a Dataverse environment. Returns {status, org_url, user_id, business_unit_id, org_id}. Call this first when connecting to a new environment.
 
-**list_tables(org_url, search="", custom_only=True, prefix="")**
-Search tables by display name or logical name. Use this when the user refers to a table by a business name. By default, only custom entities are returned (custom_only=True). Use prefix to filter by logical name prefix.
+**list_tables(org_url, search="", custom_only=True, prefix="", exclude_ms_prefixes=True)**
+Search tables by display name or logical name. Use this when the user refers to a table by a business name. By default, only custom entities are returned (custom_only=True) and Microsoft-prefixed solution tables are excluded (exclude_ms_prefixes=True). Use prefix to filter by logical name prefix.
 
 **describe_table(org_url, table)**
 Get column metadata for a table. Use this before querying to find column names.
