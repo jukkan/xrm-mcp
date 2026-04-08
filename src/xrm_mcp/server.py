@@ -5,6 +5,7 @@ Provides 6 MCP tools for reading and writing Dataverse/XRM data.
 
 from typing import Any
 
+import httpx
 from fastmcp import FastMCP
 
 from . import schema as schema_module
@@ -125,14 +126,26 @@ def query_records(
         params["$orderby"] = orderby
 
     # Query the records
-    response = fetch(org_url, entity_set_name, token, params)
-
-    records = response.get("value", [])
-
-    return {
-        "count": len(records),
-        "records": records,
-    }
+    try:
+        response = fetch(org_url, entity_set_name, token, params)
+        records = response.get("value", [])
+        return {
+            "count": len(records),
+            "records": records,
+        }
+    except httpx.HTTPStatusError as e:
+        # If 400 error and $select was used, retry without $select
+        if e.response.status_code == 400 and select:
+            params_no_select = {k: v for k, v in params.items() if k != "$select"}
+            response = fetch(org_url, entity_set_name, token, params_no_select)
+            records = response.get("value", [])
+            return {
+                "count": len(records),
+                "records": records,
+                "note": "select ignored due to invalid column name — returning all columns",
+            }
+        # Re-raise if not a 400 with $select
+        raise
 
 
 @mcp.tool()
