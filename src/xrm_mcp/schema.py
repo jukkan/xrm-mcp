@@ -32,19 +32,12 @@ def list_tables(org_url: str, token: str, search: str = "", custom_only: bool = 
     }
 
     # Build server-side filter
+    # Note: Dataverse EntityDefinitions endpoint returns 501 with startswith() or contains()
+    # Only use IsCustomEntity filter server-side; do other filtering client-side
     filters = []
 
     if custom_only:
         filters.append("IsCustomEntity eq true")
-
-    if prefix:
-        filters.append(f"startswith(LogicalName,'{prefix}')")
-
-    # Add search filtering server-side when custom_only=True
-    if search and custom_only:
-        # Filter LogicalName server-side, DisplayName will be filtered client-side
-        # Note: Complex DisplayName filtering with LocalizedLabels/any is not supported by Dataverse
-        filters.append(f"contains(LogicalName,'{search}')")
 
     if filters:
         params["$filter"] = " and ".join(filters)
@@ -92,19 +85,16 @@ def list_tables(org_url: str, token: str, search: str = "", custom_only: bool = 
             if any(logical_name.startswith(p) for p in ms_prefixes):
                 continue
 
+        # Client-side filtering for prefix
+        if prefix:
+            if not logical_name.startswith(prefix):
+                continue
+
         # Client-side filtering for search term
         if search:
             search_lower = search.lower()
-            # If custom_only=True, LogicalName is already filtered server-side, only check DisplayName
-            if custom_only:
-                if search_lower not in display_name.lower():
-                    # Already matched LogicalName server-side, check if also matches DisplayName
-                    # If not, we still keep it because it matched LogicalName
-                    pass
-            else:
-                # If custom_only=False, do full client-side filtering
-                if search_lower not in logical_name.lower() and search_lower not in display_name.lower():
-                    continue
+            if search_lower not in logical_name.lower() and search_lower not in display_name.lower():
+                continue
 
         tables.append({
             "logical_name": logical_name,
