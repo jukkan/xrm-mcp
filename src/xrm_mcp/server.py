@@ -16,6 +16,48 @@ from .auth import get_token
 mcp = FastMCP("xrm-mcp")
 
 
+def _clean_record(record: dict[str, Any]) -> dict[str, Any]:
+    """Post-process a record to replace raw values with formatted values and strip OData annotations.
+
+    Args:
+        record: Raw record from the API
+
+    Returns:
+        Cleaned record with formatted values and no OData annotations
+    """
+    cleaned: dict[str, Any] = {}
+    formatted_values: dict[str, str] = {}
+
+    # First pass: collect all formatted values
+    for key, value in record.items():
+        if key.endswith("@OData.Community.Display.V1.FormattedValue"):
+            # Extract the base key (remove the annotation suffix)
+            base_key = key.replace("@OData.Community.Display.V1.FormattedValue", "")
+            formatted_values[base_key] = value
+
+    # Second pass: build cleaned record
+    for key, value in record.items():
+        # Skip all OData annotations
+        if "@odata." in key.lower() or "@OData." in key:
+            continue
+
+        # Handle lookup fields (end with _value)
+        if key.endswith("_value") and key in formatted_values:
+            # Add cleaned key without underscore prefix and _value suffix
+            # e.g., _na_project_value -> na_project
+            clean_key = key.lstrip("_").replace("_value", "")
+            cleaned[clean_key] = formatted_values[key]
+        # Handle picklist/other fields that have formatted values
+        elif key in formatted_values:
+            # Replace raw value with formatted value
+            cleaned[key] = formatted_values[key]
+        else:
+            # Keep the original value
+            cleaned[key] = value
+
+    return cleaned
+
+
 @mcp.tool()
 def ping(org_url: str) -> dict[str, Any]:
     """Test connectivity to an XRM/Dataverse environment and verify authentication.
@@ -149,9 +191,11 @@ def query_records(
     try:
         response = fetch(org_url, entity_set_name, token, params)
         records = response.get("value", [])
+        # Clean up records: replace raw values with formatted values and strip OData annotations
+        cleaned_records = [_clean_record(record) for record in records]
         return {
-            "count": len(records),
-            "records": records,
+            "count": len(cleaned_records),
+            "records": cleaned_records,
         }
     except httpx.HTTPStatusError as e:
         # If 400 error and $select was used, retry without $select
@@ -159,9 +203,11 @@ def query_records(
             params_no_select = {k: v for k, v in params.items() if k != "$select"}
             response = fetch(org_url, entity_set_name, token, params_no_select)
             records = response.get("value", [])
+            # Clean up records: replace raw values with formatted values and strip OData annotations
+            cleaned_records = [_clean_record(record) for record in records]
             return {
-                "count": len(records),
-                "records": records,
+                "count": len(cleaned_records),
+                "records": cleaned_records,
                 "note": "select ignored due to invalid column name — returning all columns",
             }
         # Re-raise if not a 400 with $select
