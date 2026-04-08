@@ -5,6 +5,8 @@ Provides table and column metadata from Dataverse.
 
 from typing import Any
 
+import httpx
+
 from .api import fetch
 
 
@@ -140,7 +142,16 @@ def describe_table(org_url: str, token: str, table: str) -> dict[str, Any]:
         "$select": "LogicalName,DisplayName,AttributeType,Description,RequiredLevel",
     }
 
-    response = fetch(org_url, path, token, params)
+    try:
+        response = fetch(org_url, path, token, params)
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            raise ValueError(
+                f"Table '{table}' not found in {org_url}. "
+                f"Call find_table(org_url, '{table}') to search by display name, "
+                f"or list_tables(org_url) to browse."
+            ) from e
+        raise
 
     # Columns to exclude
     excluded_columns = {
