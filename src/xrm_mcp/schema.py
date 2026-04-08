@@ -54,9 +54,25 @@ def list_tables(org_url: str, token: str, search: str = "", custom_only: bool = 
 
     # Microsoft-prefixed solution tables to exclude
     ms_prefixes = (
-        "msdyn_", "msdynmkt_", "msdyncrm_", "msfp_", "adx_", "mspp_", "bot_",
+        "msdyn_", "msdynmkt_", "msdyncrm_", "msfp_", "adx_", "mspp_", "bot",
         "botcomponent_", "flowmachine", "flowsession", "desktopflow",
-        "workqueue", "gitbranch", "gitorganization", "gitrepository"
+        "workqueue", "gitbranch", "gitorganization", "gitrepository",
+        "aiplugin", "aicopilot", "aibuildertable", "aicontact", "ai",
+        "flowrun", "flowlog", "flowaggregation", "flowcapacity", "flow",
+        "powerpage", "synapse", "sourcecontrol", "sa_",
+        "catalog", "credential", "datalake", "elasticfileattachment",
+        "environmentvariabledefinition", "expiredprocess",
+        "federatedknowledge", "goal", "kbarticle", "keyvaultreference",
+        "languagelocale", "mailbox", "metric", "mobileofflineprofile",
+        "package", "pluginassembly", "plugintype", "principalobjecttableaccess",
+        "privilegesremovedsetting", "processstageparameter",
+        "publisher", "queue", "reconciliationentitystepcomplextype",
+        "retentionconfig", "rollupfield", "routingrule",
+        "serviceplan", "sharepointdocument", "sla",
+        "systemuser", "task", "team", "template", "territory",
+        "theme", "tracelog", "transactioncurrency",
+        "userform", "usermapping", "userquery",
+        "webresource", "workflowbinary"
     )
 
     for entity in response.get("value", []):
@@ -98,8 +114,14 @@ def list_tables(org_url: str, token: str, search: str = "", custom_only: bool = 
             "description": description,
         })
 
-    # Sort: custom entities first, then alphabetical by logical name
-    tables.sort(key=lambda t: (not t["is_custom"], t["logical_name"]))
+    # Sort: custom entities first, then by logical name length (shorter first), then alphabetical
+    # When no prefix filter is active, shorter/simpler logical names (usually core business tables) appear first
+    if prefix:
+        # With prefix filter: custom entities first, then alphabetical by logical name
+        tables.sort(key=lambda t: (not t["is_custom"], t["logical_name"]))
+    else:
+        # Without prefix filter: custom entities first, shorter names first, then alphabetical
+        tables.sort(key=lambda t: (not t["is_custom"], len(t["logical_name"]), t["logical_name"]))
 
     return tables
 
