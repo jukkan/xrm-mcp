@@ -2,6 +2,8 @@
 
 A minimal MCP server that gives AI coding agents (Claude Code, Codex CLI, Gemini CLI) clean read + careful write access to Microsoft Dataverse / XRM environments via the Dataverse Web API v9.2.
 
+![xrm-mcp-300px](https://github.com/user-attachments/assets/60d54a37-16a1-42d1-b117-b116ef0387f5)
+
 ## Features
 
 - **No Microsoft MCP billing** — uses standard Dataverse Web API
