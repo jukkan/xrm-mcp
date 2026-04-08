@@ -32,6 +32,7 @@ def fetch(org_url: str, path: str, token: str, params: dict[str, Any] | None = N
         "OData-MaxVersion": "4.0",
         "OData-Version": "4.0",
         "Accept": "application/json",
+        "Prefer": "odata.include-annotations=\"OData.Community.Display.V1.FormattedValue\"",
     }
 
     if params is None:
