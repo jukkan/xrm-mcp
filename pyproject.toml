@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "xrm-mcp"
-version = "0.1.0"
+version = "0.1.1"
 description = "Minimal MCP server for Microsoft Dataverse / XRM via Web API"
 readme = "README.md"
 requires-python = ">=3.10"
