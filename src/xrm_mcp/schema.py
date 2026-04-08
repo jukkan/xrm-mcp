@@ -5,6 +5,8 @@ Provides table and column metadata from Dataverse.
 
 from typing import Any
 
+import httpx
+
 from .api import fetch
 
 
@@ -32,19 +34,12 @@ def list_tables(org_url: str, token: str, search: str = "", custom_only: bool = 
     }
 
     # Build server-side filter
+    # Note: Dataverse EntityDefinitions endpoint returns 501 with startswith() or contains()
+    # Only use IsCustomEntity filter server-side; do other filtering client-side
     filters = []
 
     if custom_only:
         filters.append("IsCustomEntity eq true")
-
-    if prefix:
-        filters.append(f"startswith(LogicalName,'{prefix}')")
-
-    # Add search filtering server-side when custom_only=True
-    if search and custom_only:
-        # Filter LogicalName server-side, DisplayName will be filtered client-side
-        # Note: Complex DisplayName filtering with LocalizedLabels/any is not supported by Dataverse
-        filters.append(f"contains(LogicalName,'{search}')")
 
     if filters:
         params["$filter"] = " and ".join(filters)
@@ -92,19 +87,16 @@ def list_tables(org_url: str, token: str, search: str = "", custom_only: bool = 
             if any(logical_name.startswith(p) for p in ms_prefixes):
                 continue
 
+        # Client-side filtering for prefix
+        if prefix:
+            if not logical_name.startswith(prefix):
+                continue
+
         # Client-side filtering for search term
         if search:
             search_lower = search.lower()
-            # If custom_only=True, LogicalName is already filtered server-side, only check DisplayName
-            if custom_only:
-                if search_lower not in display_name.lower():
-                    # Already matched LogicalName server-side, check if also matches DisplayName
-                    # If not, we still keep it because it matched LogicalName
-                    pass
-            else:
-                # If custom_only=False, do full client-side filtering
-                if search_lower not in logical_name.lower() and search_lower not in display_name.lower():
-                    continue
+            if search_lower not in logical_name.lower() and search_lower not in display_name.lower():
+                continue
 
         tables.append({
             "logical_name": logical_name,
@@ -150,7 +142,16 @@ def describe_table(org_url: str, token: str, table: str) -> dict[str, Any]:
         "$select": "LogicalName,DisplayName,AttributeType,Description,RequiredLevel",
     }
 
-    response = fetch(org_url, path, token, params)
+    try:
+        response = fetch(org_url, path, token, params)
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            raise ValueError(
+                f"Table '{table}' not found in {org_url}. "
+                f"Call find_table(org_url, '{table}') to search by display name, "
+                f"or list_tables(org_url) to browse."
+            ) from e
+        raise
 
     # Columns to exclude
     excluded_columns = {
@@ -192,3 +193,62 @@ def describe_table(org_url: str, token: str, table: str) -> dict[str, Any]:
         "table_name": table,
         "columns": columns,
     }
+
+
+def find_table(org_url: str, token: str, name: str) -> list[dict[str, Any]]:
+    """Search for a table by display name or partial logical name.
+
+    Use this when the user gives a friendly name like 'hour entry' or 'hours'
+    and you don't know the exact logical name. Returns all candidate matches
+    from this specific environment — do not use workspace files or project
+    notes to infer table names.
+
+    Args:
+        org_url: The organization URL
+        token: The access token
+        name: The search term (display name or partial logical name)
+
+    Returns:
+        List of matching tables, sorted by exact display name match first,
+        then partial matches. Empty list with error message if no matches.
+    """
+    # Get all custom tables
+    custom_tables = list_tables(org_url, token, search="", custom_only=True, prefix="", exclude_ms_prefixes=False)
+
+    # Get all standard tables
+    standard_tables = list_tables(org_url, token, search="", custom_only=False, prefix="", exclude_ms_prefixes=False)
+
+    # Combine and deduplicate by logical_name
+    all_tables_dict = {t["logical_name"]: t for t in custom_tables}
+    for t in standard_tables:
+        if t["logical_name"] not in all_tables_dict:
+            all_tables_dict[t["logical_name"]] = t
+
+    all_tables = list(all_tables_dict.values())
+
+    # Filter by name
+    name_lower = name.lower()
+    matches = []
+
+    for table in all_tables:
+        logical_name = table["logical_name"].lower()
+        display_name = table["display_name"].lower()
+
+        if name_lower in logical_name or name_lower in display_name:
+            # Track if this is an exact display name match
+            exact_match = display_name == name_lower
+            matches.append({
+                **table,
+                "_exact_match": exact_match,
+            })
+
+    # Sort: exact display name matches first, then partial matches
+    matches.sort(key=lambda t: (not t.pop("_exact_match", False), t["logical_name"]))
+
+    if not matches:
+        return [{
+            "matches": [],
+            "message": f"No table found matching '{name}' in {org_url}. Call list_tables() to browse available tables.",
+        }]
+
+    return matches

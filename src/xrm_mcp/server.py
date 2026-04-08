@@ -5,6 +5,7 @@ Provides 6 MCP tools for reading and writing Dataverse/XRM data.
 
 from typing import Any
 
+import httpx
 from fastmcp import FastMCP
 
 from . import schema as schema_module
@@ -77,6 +78,26 @@ def describe_table(org_url: str, table: str) -> dict[str, Any]:
 
 
 @mcp.tool()
+def find_table(org_url: str, name: str) -> list[dict[str, Any]]:
+    """Search for a table by display name or partial logical name.
+
+    Use this when the user gives a friendly name like 'hour entry' or 'hours'
+    and you don't know the exact logical name. Returns all candidate matches
+    from this specific environment — do not use workspace files or project
+    notes to infer table names.
+
+    Args:
+        org_url: The Dataverse organization URL
+        name: The search term (display name or partial logical name)
+
+    Returns:
+        List of matching tables, sorted by exact display name match first, then partial matches
+    """
+    token = get_token(org_url)
+    return schema_module.find_table(org_url, token, name)
+
+
+@mcp.tool()
 def query_records(
     org_url: str,
     table: str,
@@ -125,14 +146,26 @@ def query_records(
         params["$orderby"] = orderby
 
     # Query the records
-    response = fetch(org_url, entity_set_name, token, params)
-
-    records = response.get("value", [])
-
-    return {
-        "count": len(records),
-        "records": records,
-    }
+    try:
+        response = fetch(org_url, entity_set_name, token, params)
+        records = response.get("value", [])
+        return {
+            "count": len(records),
+            "records": records,
+        }
+    except httpx.HTTPStatusError as e:
+        # If 400 error and $select was used, retry without $select
+        if e.response.status_code == 400 and select:
+            params_no_select = {k: v for k, v in params.items() if k != "$select"}
+            response = fetch(org_url, entity_set_name, token, params_no_select)
+            records = response.get("value", [])
+            return {
+                "count": len(records),
+                "records": records,
+                "note": "select ignored due to invalid column name — returning all columns",
+            }
+        # Re-raise if not a 400 with $select
+        raise
 
 
 @mcp.tool()
