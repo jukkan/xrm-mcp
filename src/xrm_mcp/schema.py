@@ -182,3 +182,62 @@ def describe_table(org_url: str, token: str, table: str) -> dict[str, Any]:
         "table_name": table,
         "columns": columns,
     }
+
+
+def find_table(org_url: str, token: str, name: str) -> list[dict[str, Any]]:
+    """Search for a table by display name or partial logical name.
+
+    Use this when the user gives a friendly name like 'hour entry' or 'hours'
+    and you don't know the exact logical name. Returns all candidate matches
+    from this specific environment — do not use workspace files or project
+    notes to infer table names.
+
+    Args:
+        org_url: The organization URL
+        token: The access token
+        name: The search term (display name or partial logical name)
+
+    Returns:
+        List of matching tables, sorted by exact display name match first,
+        then partial matches. Empty list with error message if no matches.
+    """
+    # Get all custom tables
+    custom_tables = list_tables(org_url, token, search="", custom_only=True, prefix="", exclude_ms_prefixes=False)
+
+    # Get all standard tables
+    standard_tables = list_tables(org_url, token, search="", custom_only=False, prefix="", exclude_ms_prefixes=False)
+
+    # Combine and deduplicate by logical_name
+    all_tables_dict = {t["logical_name"]: t for t in custom_tables}
+    for t in standard_tables:
+        if t["logical_name"] not in all_tables_dict:
+            all_tables_dict[t["logical_name"]] = t
+
+    all_tables = list(all_tables_dict.values())
+
+    # Filter by name
+    name_lower = name.lower()
+    matches = []
+
+    for table in all_tables:
+        logical_name = table["logical_name"].lower()
+        display_name = table["display_name"].lower()
+
+        if name_lower in logical_name or name_lower in display_name:
+            # Track if this is an exact display name match
+            exact_match = display_name == name_lower
+            matches.append({
+                **table,
+                "_exact_match": exact_match,
+            })
+
+    # Sort: exact display name matches first, then partial matches
+    matches.sort(key=lambda t: (not t.pop("_exact_match", False), t["logical_name"]))
+
+    if not matches:
+        return [{
+            "matches": [],
+            "message": f"No table found matching '{name}' in {org_url}. Call list_tables() to browse available tables.",
+        }]
+
+    return matches

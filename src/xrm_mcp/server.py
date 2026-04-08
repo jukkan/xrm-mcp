@@ -78,6 +78,26 @@ def describe_table(org_url: str, table: str) -> dict[str, Any]:
 
 
 @mcp.tool()
+def find_table(org_url: str, name: str) -> list[dict[str, Any]]:
+    """Search for a table by display name or partial logical name.
+
+    Use this when the user gives a friendly name like 'hour entry' or 'hours'
+    and you don't know the exact logical name. Returns all candidate matches
+    from this specific environment — do not use workspace files or project
+    notes to infer table names.
+
+    Args:
+        org_url: The Dataverse organization URL
+        name: The search term (display name or partial logical name)
+
+    Returns:
+        List of matching tables, sorted by exact display name match first, then partial matches
+    """
+    token = get_token(org_url)
+    return schema_module.find_table(org_url, token, name)
+
+
+@mcp.tool()
 def query_records(
     org_url: str,
     table: str,
