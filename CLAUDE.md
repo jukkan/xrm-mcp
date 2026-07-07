@@ -39,7 +39,7 @@ User gives a logical name you recognise from this session's list_tables:
 You need column names before querying:
   → describe_table(org_url, logical_name)
 
-Column names unknown and query returns 400:
+Column names unknown and select raises a ValueError naming invalid column(s):
   → describe_table first, then retry query with exact column names
 
 **list_tables usage patterns:**
@@ -68,12 +68,26 @@ Column names unknown and query returns 400:
 )
 → returns {count: 42, records: [...]}
 
+## Example: account exploration ("build me an account hub note for Contoso")
+
+Dataverse adds the most value here through relationships and activity history,
+not the base `account.description` field, which is often sparse. Prefer this
+order over one broad query:
+
+1. `ping(org_url)` — first call in a new session against this org
+2. `describe_table(org_url, "account")` only if field names are unclear
+3. `query_records(org_url, "account", filter="accountid eq {id}")` — base record
+4. `query_records(org_url, "contact", filter="parentcustomerid eq {id}")` — related contacts
+5. `query_records(org_url, "activitypointer", filter="regardingobjectid eq {id}", orderby="createdon desc")` — timeline
+6. Optionally `query_records(org_url, "email", filter="regardingobjectid eq {id}", orderby="createdon desc", top=20)` — recent tracked email metadata
+7. Summarize into Markdown rather than mirroring raw CRM content — `activitypointer`/`email` bodies can contain verbose raw HTML; don't reproduce it wholesale.
+
 ## Tools summary
 
 ### Read tools
 
 **ping(org_url)**
-Verify connectivity and authentication to a Dataverse environment. Returns {status, org_url, user_id, business_unit_id, org_id}. Call this first when connecting to a new environment.
+Verify connectivity and authentication to a Dataverse environment. Returns {status, org_url, user_id, business_unit_id, org_id, auth_method, tenant_id}. Call this first when connecting to a new environment. `auth_method`/`tenant_id` show which identity actually answered the call — use this to check for a wrong-tenant mismatch instead of running `az account show` yourself, since that command depends on Azure CLI's local log/telemetry writes and can fail in restricted or sandboxed shells even when token acquisition itself works fine.
 
 **find_table(org_url, name)**
 Search for a table by display name or partial logical name. Use this when the user gives a friendly name like 'hour entry' or 'hours' and you don't know the exact logical name. Returns all candidate matches from this specific environment — do not use workspace files or project notes to infer table names.
@@ -110,4 +124,22 @@ Create or update a record using an alternate key (for sync/import scenarios).
 
 XRM MCP tries Azure CLI first (`az account get-access-token`), then falls back to interactive device flow via MSAL. Tokens are cached at `~/.xrm-mcp/cache.json`.
 
-If you need to re-authenticate, delete the cache file or use `az login` to refresh Azure CLI credentials.
+**Per-org identity cache:** the identity (Azure CLI tenant, or MSAL account) that
+last successfully called a given `org_url` is remembered in
+`~/.xrm-mcp/identity_cache.json`, keyed by org_url. This is what makes hopping
+between your production CRM, demo environments, and customer tenants work
+without babysitting the default `az` login for every call — once a call to an
+org succeeds, later calls to that same org prefer the identity that worked,
+even if the default `az` account has since switched to a different tenant for
+other work.
+
+If a call gets a 401/403, the cached identity for that org is automatically
+cleared and the error message says so — just retry the call and it will
+rediscover a working identity (default `az` CLI, then any cached MSAL
+account, then device flow). If it keeps failing, run `az login` for the
+correct account/tenant.
+
+To force a full reset for one org, delete its entry from
+`~/.xrm-mcp/identity_cache.json` (or delete the whole file to reset all of
+them). To fully re-authenticate, delete `~/.xrm-mcp/cache.json` (MSAL's token
+cache) or use `az login` to refresh Azure CLI credentials.

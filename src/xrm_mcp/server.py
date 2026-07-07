@@ -1,19 +1,49 @@
 """FastMCP server implementation for XRM MCP.
 
-Provides 6 MCP tools for reading and writing Dataverse/XRM data.
+Provides 8 MCP tools for reading and writing Dataverse/XRM data.
 """
 
+from contextlib import contextmanager
 from typing import Any
 
 import httpx
 from fastmcp import FastMCP
 
+from . import identity_cache
 from . import schema as schema_module
 from .api import fetch, patch, post
 from .auth import get_token
 
 # Initialize FastMCP server
 mcp = FastMCP("xrm-mcp")
+
+
+@contextmanager
+def _auth_session(org_url: str):
+    """Acquire a token for org_url and record whether the identity used actually worked.
+
+    Prefers the identity that last succeeded for this org_url. On a 401/403
+    from Dataverse, clears the cached identity for this org so the next call
+    re-discovers a working identity instead of repeating the same failure.
+    On success, remembers the identity so subsequent calls to the same org
+    skip straight to it.
+    """
+    token, identity = get_token(org_url)
+    try:
+        yield token, identity
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code in (401, 403):
+            identity_cache.clear(org_url)
+            tenant_note = f" (tenant {identity['tenant_id']})" if identity.get("tenant_id") else ""
+            raise RuntimeError(
+                f"Got {e.response.status_code} from {org_url} using cached "
+                f"{identity['method']} identity{tenant_note}. Cleared the cached "
+                "identity for this org — retry the call; if it still fails, run "
+                "'az login' for the correct account/tenant and retry again."
+            ) from e
+        raise
+    else:
+        identity_cache.set(org_url, identity["method"], identity.get("tenant_id"), identity.get("account_id"))
 
 
 def _clean_record(record: dict[str, Any]) -> dict[str, Any]:
@@ -68,10 +98,15 @@ def ping(org_url: str) -> dict[str, Any]:
         org_url: The Dataverse organization URL (e.g., https://yourorg.crm4.dynamics.com)
 
     Returns:
-        Dictionary with status, org_url, user_id, business_unit_id, org_id
+        Dictionary with status, org_url, user_id, business_unit_id, org_id,
+        auth_method, tenant_id. auth_method/tenant_id identify which identity
+        answered the call — use this instead of shelling out to `az account
+        show` to check for a tenant mismatch, since that command depends on
+        Azure CLI's local log/telemetry writes and can fail in restricted
+        sandboxes even when token acquisition itself works fine.
     """
-    token = get_token(org_url)
-    response = fetch(org_url, "WhoAmI", token)
+    with _auth_session(org_url) as (token, identity):
+        response = fetch(org_url, "WhoAmI", token)
 
     return {
         "status": "ok",
@@ -79,6 +114,8 @@ def ping(org_url: str) -> dict[str, Any]:
         "user_id": response.get("UserId", ""),
         "business_unit_id": response.get("BusinessUnitId", ""),
         "org_id": response.get("OrganizationId", ""),
+        "auth_method": identity["method"],
+        "tenant_id": identity.get("tenant_id"),
     }
 
 
@@ -98,8 +135,8 @@ def list_tables(org_url: str, search: str = "", custom_only: bool = True, prefix
     Returns:
         List of tables with logical_name, display_name, entity_set_name, is_custom, description
     """
-    token = get_token(org_url)
-    return schema_module.list_tables(org_url, token, search, custom_only, prefix, exclude_ms_prefixes)
+    with _auth_session(org_url) as (token, _identity):
+        return schema_module.list_tables(org_url, token, search, custom_only, prefix, exclude_ms_prefixes)
 
 
 @mcp.tool()
@@ -115,8 +152,8 @@ def describe_table(org_url: str, table: str) -> dict[str, Any]:
     Returns:
         Dictionary with table_name and columns list containing metadata for each column
     """
-    token = get_token(org_url)
-    return schema_module.describe_table(org_url, token, table)
+    with _auth_session(org_url) as (token, _identity):
+        return schema_module.describe_table(org_url, token, table)
 
 
 @mcp.tool()
@@ -135,8 +172,8 @@ def find_table(org_url: str, name: str) -> list[dict[str, Any]]:
     Returns:
         List of matching tables, sorted by exact display name match first, then partial matches
     """
-    token = get_token(org_url)
-    return schema_module.find_table(org_url, token, name)
+    with _auth_session(org_url) as (token, _identity):
+        return schema_module.find_table(org_url, token, name)
 
 
 @mcp.tool()
@@ -160,58 +197,79 @@ def query_records(
 
     Returns:
         Dictionary with count and records list
+
+    Raises:
+        ValueError: If select names one or more columns not found on the table
     """
-    token = get_token(org_url)
+    with _auth_session(org_url) as (token, _identity):
+        # Get entity set name and column list from table metadata
+        table_info = schema_module.describe_table(org_url, token, table)
 
-    # Get entity set name from table metadata
-    table_info = schema_module.describe_table(org_url, token, table)
-
-    # Need to fetch entity set name separately
-    entity_params = {
-        "$select": "EntitySetName",
-        "$filter": f"LogicalName eq '{table}'",
-    }
-    entity_response = fetch(org_url, "EntityDefinitions", token, entity_params)
-    entity_set_name = entity_response.get("value", [{}])[0].get("EntitySetName", table + "s")
-
-    # Build query parameters
-    params: dict[str, Any] = {}
-
-    if select:
-        params["$select"] = select
-    if filter:
-        params["$filter"] = filter
-    if top:
-        # Enforce hard cap of 5000
-        params["$top"] = min(top, 5000)
-    if orderby:
-        params["$orderby"] = orderby
-
-    # Query the records
-    try:
-        response = fetch(org_url, entity_set_name, token, params)
-        records = response.get("value", [])
-        # Clean up records: replace raw values with formatted values and strip OData annotations
-        cleaned_records = [_clean_record(record) for record in records]
-        return {
-            "count": len(cleaned_records),
-            "records": cleaned_records,
+        # Need to fetch entity set name separately
+        entity_params = {
+            "$select": "EntitySetName",
+            "$filter": f"LogicalName eq '{table}'",
         }
-    except httpx.HTTPStatusError as e:
-        # If 400 error and $select was used, retry without $select
-        if e.response.status_code == 400 and select:
-            params_no_select = {k: v for k, v in params.items() if k != "$select"}
-            response = fetch(org_url, entity_set_name, token, params_no_select)
+        entity_response = fetch(org_url, "EntityDefinitions", token, entity_params)
+        entity_set_name = entity_response.get("value", [{}])[0].get("EntitySetName", table + "s")
+
+        # Validate $select against real column names before querying, so a typo
+        # produces a clear error instead of a silent fallback to every column.
+        if select:
+            valid_columns = {col["logical_name"].lower() for col in table_info["columns"]}
+            requested = [c.strip() for c in select.split(",") if c.strip()]
+            invalid = []
+            for column in requested:
+                # Allow lookup nav-property forms, e.g. _na_project_value
+                bare = column.lower()
+                if bare.startswith("_") and bare.endswith("_value"):
+                    bare = bare[1:-6]
+                if bare not in valid_columns:
+                    invalid.append(column)
+            if invalid:
+                raise ValueError(
+                    f"select contains column(s) not found on '{table}': {', '.join(invalid)}. "
+                    f"Call describe_table(org_url, '{table}') to see valid column names."
+                )
+
+        # Build query parameters
+        params: dict[str, Any] = {}
+
+        if select:
+            params["$select"] = select
+        if filter:
+            params["$filter"] = filter
+        if top:
+            # Enforce hard cap of 5000
+            params["$top"] = min(top, 5000)
+        if orderby:
+            params["$orderby"] = orderby
+
+        # Query the records
+        try:
+            response = fetch(org_url, entity_set_name, token, params)
             records = response.get("value", [])
             # Clean up records: replace raw values with formatted values and strip OData annotations
             cleaned_records = [_clean_record(record) for record in records]
             return {
                 "count": len(cleaned_records),
                 "records": cleaned_records,
-                "note": "select ignored due to invalid column name — returning all columns",
             }
-        # Re-raise if not a 400 with $select
-        raise
+        except httpx.HTTPStatusError as e:
+            # Validation above catches typos; this is a last-resort safety net for
+            # cases it doesn't cover (e.g. a valid but non-selectable system column).
+            if e.response.status_code == 400 and select:
+                params_no_select = {k: v for k, v in params.items() if k != "$select"}
+                response = fetch(org_url, entity_set_name, token, params_no_select)
+                records = response.get("value", [])
+                cleaned_records = [_clean_record(record) for record in records]
+                return {
+                    "count": len(cleaned_records),
+                    "records": cleaned_records,
+                    "note": "select rejected by the server — returning all columns",
+                }
+            # Re-raise if not a 400 with $select
+            raise
 
 
 @mcp.tool()
@@ -226,18 +284,17 @@ def create_record(org_url: str, table: str, data: dict[str, Any]) -> dict[str, s
     Returns:
         Dictionary with the created record id
     """
-    token = get_token(org_url)
+    with _auth_session(org_url) as (token, _identity):
+        # Get entity set name
+        entity_params = {
+            "$select": "EntitySetName",
+            "$filter": f"LogicalName eq '{table}'",
+        }
+        entity_response = fetch(org_url, "EntityDefinitions", token, entity_params)
+        entity_set_name = entity_response.get("value", [{}])[0].get("EntitySetName", table + "s")
 
-    # Get entity set name
-    entity_params = {
-        "$select": "EntitySetName",
-        "$filter": f"LogicalName eq '{table}'",
-    }
-    entity_response = fetch(org_url, "EntityDefinitions", token, entity_params)
-    entity_set_name = entity_response.get("value", [{}])[0].get("EntitySetName", table + "s")
-
-    # Create the record
-    response = post(org_url, entity_set_name, token, data)
+        # Create the record
+        response = post(org_url, entity_set_name, token, data)
 
     # Extract the ID from the response
     if "id" in response:
@@ -265,19 +322,18 @@ def update_record(org_url: str, table: str, record_id: str, data: dict[str, Any]
     Returns:
         Success confirmation
     """
-    token = get_token(org_url)
+    with _auth_session(org_url) as (token, _identity):
+        # Get entity set name
+        entity_params = {
+            "$select": "EntitySetName",
+            "$filter": f"LogicalName eq '{table}'",
+        }
+        entity_response = fetch(org_url, "EntityDefinitions", token, entity_params)
+        entity_set_name = entity_response.get("value", [{}])[0].get("EntitySetName", table + "s")
 
-    # Get entity set name
-    entity_params = {
-        "$select": "EntitySetName",
-        "$filter": f"LogicalName eq '{table}'",
-    }
-    entity_response = fetch(org_url, "EntityDefinitions", token, entity_params)
-    entity_set_name = entity_response.get("value", [{}])[0].get("EntitySetName", table + "s")
-
-    # Update the record
-    path = f"{entity_set_name}({record_id})"
-    patch(org_url, path, token, data)
+        # Update the record
+        path = f"{entity_set_name}({record_id})"
+        patch(org_url, path, token, data)
 
     return {"success": True, "id": record_id}
 
@@ -304,19 +360,18 @@ def upsert_record(
     Returns:
         Success confirmation
     """
-    token = get_token(org_url)
+    with _auth_session(org_url) as (token, _identity):
+        # Get entity set name
+        entity_params = {
+            "$select": "EntitySetName",
+            "$filter": f"LogicalName eq '{table}'",
+        }
+        entity_response = fetch(org_url, "EntityDefinitions", token, entity_params)
+        entity_set_name = entity_response.get("value", [{}])[0].get("EntitySetName", table + "s")
 
-    # Get entity set name
-    entity_params = {
-        "$select": "EntitySetName",
-        "$filter": f"LogicalName eq '{table}'",
-    }
-    entity_response = fetch(org_url, "EntityDefinitions", token, entity_params)
-    entity_set_name = entity_response.get("value", [{}])[0].get("EntitySetName", table + "s")
-
-    # Upsert using alternate key
-    path = f"{entity_set_name}({alternate_key}='{alternate_value}')"
-    patch(org_url, path, token, data, if_match="*", if_none_match="*")
+        # Upsert using alternate key
+        path = f"{entity_set_name}({alternate_key}='{alternate_value}')"
+        patch(org_url, path, token, data, if_match="*", if_none_match="*")
 
     return {"success": True, "alternate_key": alternate_key, "alternate_value": alternate_value}
 

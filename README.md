@@ -12,7 +12,7 @@ A minimal MCP server that gives AI coding agents (Claude Code, GitHub Copilot, C
 - **No admin toggles** — works with any Dataverse environment you can log into
 - **No Managed Environment required** — standard environments work fine
 - **No per-environment setup** — org_url is a parameter on every tool call
-- **Multi-tenant by design** — connect to multiple orgs in the same session
+- **Multi-tenant by design** — connect to multiple orgs in the same session, with per-environment identity caching so switching between tenants doesn't require re-authenticating each time
 - **Azure CLI + MSAL auth** — tries `az` first, falls back to interactive device flow
 - **8 MCP tools** — ping, find/list tables, describe schema, query, create, update, upsert
 
@@ -82,7 +82,17 @@ XRM MCP attempts authentication in the following order:
 
 Tokens are cached at `~/.xrm-mcp/cache.json`.
 
-To re-authenticate, delete the cache file or use `az login`.
+If you work across multiple tenants (e.g. your own production environment, demo
+environments, and customer tenants), XRM MCP remembers which identity last
+worked for each `org_url` in `~/.xrm-mcp/identity_cache.json` and prefers it on
+the next call — so switching tenants doesn't depend on which `az` account
+happens to be active. If a call gets a `401`/`403`, that org's cached identity
+is cleared automatically and the error message tells you to just retry, which
+re-discovers a working identity.
+
+To re-authenticate, delete `~/.xrm-mcp/cache.json` or use `az login`. To reset
+which identity is used for a specific org, delete its entry from
+`~/.xrm-mcp/identity_cache.json`.
 
 ### Testing authentication manually
 
@@ -96,8 +106,8 @@ python -m xrm_mcp.auth https://yourorg.crm4.dynamics.com
 
 **ping(org_url)**
 - Verify connectivity and authentication to a Dataverse environment
-- Returns: status, org_url, user_id, business_unit_id, org_id
-- Call this first when connecting to a new environment
+- Returns: status, org_url, user_id, business_unit_id, org_id, auth_method, tenant_id
+- Call this first when connecting to a new environment; `auth_method`/`tenant_id` let you confirm which identity answered the call
 
 **find_table(org_url, name)**
 - Search for a table by display name or partial logical name
@@ -120,6 +130,7 @@ python -m xrm_mcp.auth https://yourorg.crm4.dynamics.com
 - Query records from a table using OData filter syntax
 - Returns: {count, records}
 - Top is capped at 5000
+- `select` is validated against real column names before querying; an invalid column raises a clear error naming it, instead of silently returning every column
 
 ### Write Tools
 
@@ -147,7 +158,7 @@ See [CLAUDE.md](CLAUDE.md) for detailed agent usage examples and [WHY.md](WHY.md
 
 ## Dependencies
 
-- fastmcp >= 0.1.0
+- fastmcp >= 0.1.0, < 3
 - msal >= 1.28.0
 - httpx >= 0.27.0
 
