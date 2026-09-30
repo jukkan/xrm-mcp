@@ -18,6 +18,8 @@ A minimal MCP server that gives AI coding agents (Claude Code, GitHub Copilot, C
 
 ## Installation
 
+For uv, pipx, virtual environments, pinned tags, and client setup, see the [installation guide](docs/installation.md).
+
 Install via pipx (recommended):
 
 ```bash
