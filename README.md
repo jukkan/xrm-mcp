@@ -158,9 +158,13 @@ See [CLAUDE.md](CLAUDE.md) for detailed agent usage examples and [WHY.md](WHY.md
 
 ## Dependencies
 
-- fastmcp >= 0.1.0, < 3
-- msal >= 1.28.0
-- httpx >= 0.27.0
+- fastmcp >= 3.0, < 4
+- msal >= 1.28.0, < 2
+- httpx >= 0.27.0, < 1
+
+Version 0.2.0 moved from FastMCP 2.x to FastMCP 3.x. Existing installs need to
+be reinstalled (for example `pipx reinstall xrm-mcp` or
+`uv tool install --force ...`) so the new FastMCP version is resolved.
 
 ## Development
 
@@ -174,7 +178,13 @@ cd xrm-mcp
 Install in development mode:
 
 ```bash
-pip install -e .
+pip install -e ".[dev]"
+```
+
+Run the tests (no Dataverse environment or credentials required):
+
+```bash
+pytest
 ```
 
 ## License
